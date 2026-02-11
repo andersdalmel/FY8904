@@ -4,6 +4,7 @@
 #include<iostream>
 #include<random>
 #include<utility>
+#include<fstream>
 
 using std::vector, std::array;
 
@@ -58,8 +59,10 @@ class Ising {
         MClattice<L> grid;
         array<array<double, 2>, 5> boltzmannFactors; // for our model, we can precompute Boltzmann factors 
                                            // and save much comp time in exponential functions
-        
-        
+        double NM;
+
+        int flipSuccess;
+
         std::mt19937 rng{42};
         std::uniform_int_distribution<int> U_disc{0, L-1};
         std::uniform_real_distribution<double> U{0, 1};
@@ -73,8 +76,10 @@ class Ising {
                     double rv = U(rng);
                     if (rv < 0.5) {
                         grid(i,j) = -1;
+                        NM -= 1;
                     } else {
                         grid(i,j) = 1; 
+                        NM += 1;
                     }
                 }
             }
@@ -92,7 +97,13 @@ class Ising {
         template<std::size_t M> // overload << operator to print Ising lattice
         friend std::ostream& operator<<(std::ostream& os, const Ising<M>& lattice);
 
-        double getTotalEnergy() {
+
+
+        /* ------------------- */
+        /* --- calculators --- */
+        /* ------------------- */
+
+        double calculateTotalEnergy() {
             /* Naive implementation for initial setup */
             double fieldEnergy = 0;
             double nnEnergy = 0;
@@ -107,7 +118,7 @@ class Ising {
             return fieldEnergy + nnEnergy;
         }
 
-        std::pair<int, int> getLocalEnergyDifference(int i, int j) {
+        std::pair<int, int> calculateLocalEnergyDifference(int i, int j) {
             /* Function to calculate local energy change when flipping 1 spin */ 
             /*double deltaE = 2*grid(i,j)*(J*(grid((i-1 + L)%L, j) + grid((i+1)%L, j)) 
                                     + grid(i, (j-1+L)%L) + grid(i, (j+1)%L)
@@ -117,7 +128,7 @@ class Ising {
             return {K, m};
         }
 
-        double getMagnetisation() {
+        double calculateMagnetisation() {
             double magnetisation = 0;
             for (int i = 0; i < L; ++i) {
                 for (int j = 0; j < L; ++j) {
@@ -127,11 +138,15 @@ class Ising {
             return magnetisation / N;
         }
 
-        double calcBoltzmannFactor(double E) {
+        double calculateBoltzmannFactor(double E) {
             double bF = std::exp(-E/(kB*T));
             return bF;
         }
-
+                
+        /* ------------------- */
+        /* getters and setters */
+        /* ------------------- */
+        
         double getBoltzmannFactor(int K, int m) {
             /* Function to extract the correct Boltzmann factor from array given 
             a certain value of K = {-4, -2, 0, 2, 4} and m = {-1, 1}. */
@@ -139,16 +154,32 @@ class Ising {
             return bF;
         }
 
+
+        double getNM() {
+            return NM;
+        }
+
+        int getFlipSuccess() {
+            return flipSuccess;
+        }
+
+                
+        /* ------------------- */
+        /* Monte Carlo methods */
+        /* ------------------- */
+
         void metropolisStep() {
             int x = U_disc(rng);
             int y = U_disc(rng);
             
             grid(x,y) *= -1; // spin has been flipped, meaning it has to be flipped back if not accepted
-            auto deltaE = getLocalEnergyDifference(x, y); // verify that this has correct sign (calculate)
+            auto deltaE = calculateLocalEnergyDifference(x, y); // verify that this has correct sign (calculate)
             int K = deltaE.first;
             int m = deltaE.second;
             double bF = getBoltzmannFactor(K, m);
-            if (U(rng) < bF) {
+            if (U(rng) < bF || ) {
+                NM += 2*grid(x,y);
+                ++flipSuccess;
                 return; // if flip is accepted, do nothing
             } else { grid(x,y) *= -1; } // if the flip is not accepted, flip back
         }
@@ -168,32 +199,61 @@ class Simulation {
         Ising<L> syst; 
         size_t N = L*L;
         int sweeps = 0;
+        vector<double> magnetisation;
+        vector<double> totalEnergy;
 
         std::mt19937 rng{42};
         std::uniform_int_distribution<int> U_disc{0, L-1};
         std::uniform_real_distribution<double> U{0, 1};
 
     public:
-        Simulation(Ising<L> system) : syst(system) {
-
-        }
+        Simulation(Ising<L> system) : syst(system) { }
 
         void metropolisSweep() {
-            /* Function to implement a Metropolis algorithm sweep, that is (strictly speaking)
+            /* Function to implement a Metropolis algorithm sweep, i.e. (strictly speaking)
                 a series of spins flips such that all spins have eventually been flipped. 
                 However, we simplify and say that one sweep is N attempted flips (to avoid
                 having to check for the condition that at least one has been successful per site). */
             for (int i = 0; i < N; ++i) {
                 syst.metropolisStep();
             }
-
             sweeps++;
         }
+
+        vector<double> getMagnetisation() {
+            return magnetisation;
+        }
+
         void printLattice() {
             std::cout << syst << std::endl;
         }
 
+        void saveMagnetisation(const std::string& filename) {
+            std::ofstream file(filename);
+            if (!file) {
+                throw std::runtime_error("Cannot open file");
+            }
+            file << "time,magnetisation\n";
+            for (int i = 0; i < magnetisation.size(); ++i) {
+                file << i*100 << "," << magnetisation[i] << "\n";
+            }
+        } 
 
+        void simulation(int n) {
+            /* Function to run a MC simulation of n sweeps. */
+            for (int i = 0; i < n; ++i) {
+                metropolisSweep(); // only save every 100th value to reduce correlation & memory usage 
+                if (i % 100 == 0) { // this should also implement a equilibrium assertion
+                    double NM = syst.getNM();
+                    magnetisation.push_back(NM/N);
+                    std::cout << "At sweep no. " << sweeps << std::endl;
+                }
+            }
+            int flipSuccesses = syst.getFlipSuccess();
+            double successPercentage = static_cast<double>(flipSuccesses)/(n*N);
+            std::cout << "DONE! \nPercentage of spin flips successful: " << successPercentage << std::endl;
+        }
+         
 };
 
 
@@ -206,18 +266,11 @@ class Simulation {
 
 
 int main() {
-    // std::cout << (0-1 + 40)%40 << std::endl;
-    // std::cout << (0+1 + 40)%40 << std::endl;
 
-
-    Ising<10> printTest(1, 1, 1); 
-    std::cout << printTest <<std::endl;
-    std::cout << printTest.getMagnetisation() << std::endl;
-    Simulation<10> testSim(printTest);
-    // testSim.testFunc();
-    testSim.metropolisSweep();
-    testSim.testFunc();
-    // std::cout << printTest.getMagnetisation() << std::endl;
-
+    Ising<40> testIsing(1, 1, 2.3); 
+    Simulation<40> testSim(testIsing);
+    testSim.simulation(100000);
+    testSim.saveMagnetisation("testMagnetisation.csv");
+   
     return 0;
 }
