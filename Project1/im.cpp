@@ -16,22 +16,32 @@ each site? Or is this computationally inefficient?
 The only thing that class would contain would be a value +/- 1, so it's probably superfluous.
 Go straight to class Ising.
 
+Maybe it would be cool to simulate enough samples to approximate M(T)? 
 */
 
 template<std::size_t L>
 class MClattice{
     private:
-        array<array<double, L>, L> lat;
+        array<array<int8_t, L>, L> lat;
 
     public:
-        double& operator()(std::size_t i, std::size_t j) {
+        // Allow indexing MClattice
+        int8_t& operator()(std::size_t i, std::size_t j) {
             return lat[i][j];
         }
 
-        const double& operator()(std::size_t i, std::size_t j) const {
+        const int8_t& operator()(std::size_t i, std::size_t j) const {
             return lat[i][j];
         }
 
+        // Make MClattice iterable
+        auto begin() { return lat.begin(); }
+        auto end()   { return lat.end(); }
+
+        auto begin() const { return lat.begin(); }
+        auto end()   const { return lat.end(); }
+
+        // Overload << for printing
         template<std::size_t M>
         friend std::ostream& operator<<(std::ostream& os, const MClattice<M>& lat);
 };
@@ -46,6 +56,9 @@ std::ostream& operator<<(std::ostream& os, const MClattice<L>& lat) {
     }
     return os;
 }
+
+
+
 
 template<std::size_t L>
 class Ising {
@@ -63,13 +76,13 @@ class Ising {
 
         int flipSuccess;
 
-        std::mt19937 rng{42};
+        std::mt19937 rng;
         std::uniform_int_distribution<int> U_disc{0, L-1};
         std::uniform_real_distribution<double> U{0, 1};
 
     public:
-        Ising(double J, double H, double T) : J{J}, H{H}, T{T} 
-        {
+        Ising(double J, double H, double T, unsigned int seed) : J{J}, H{H}, T{T}, rng{seed} {
+            
             N = L*L;
             for (int i = 0; i < L; ++i) {
                 for (int j = 0; j < L; ++j) {
@@ -172,16 +185,30 @@ class Ising {
             int x = U_disc(rng);
             int y = U_disc(rng);
             
-            grid(x,y) *= -1; // spin has been flipped, meaning it has to be flipped back if not accepted
             auto deltaE = calculateLocalEnergyDifference(x, y); // verify that this has correct sign (calculate)
             int K = deltaE.first;
             int m = deltaE.second;
             double bF = getBoltzmannFactor(K, m);
-            if (U(rng) < bF || ) {
+            if (U(rng) < bF) {
+                grid(x,y) *= -1;
                 NM += 2*grid(x,y);
                 ++flipSuccess;
-                return; // if flip is accepted, do nothing
-            } else { grid(x,y) *= -1; } // if the flip is not accepted, flip back
+                return; // if flip is accepted, perform flip, update total magnetisation, note success.
+            } 
+        }
+
+        void saveLatticeSnapshot(const std::string& filename, bool append=true) {
+            std::ofstream out(filename, append ? std::ios::binary | std::ios::app : std::ios::binary);
+            if (!out) {
+                throw std::runtime_error("Cannot open file " + filename);
+            }
+            
+            // Write row by row
+            for (const auto& row : grid) {
+                out.write(reinterpret_cast<const char*>(row.data()), row.size() * sizeof(int8_t));
+            }
+
+            out.close();
         }
 };
 
@@ -190,6 +217,8 @@ std::ostream& operator<<(std::ostream& os, const Ising<L>& lattice) {
     os << lattice.grid;
     return os;
 } 
+
+
 
 template<std::size_t L>
 class Simulation {
@@ -202,12 +231,12 @@ class Simulation {
         vector<double> magnetisation;
         vector<double> totalEnergy;
 
-        std::mt19937 rng{42};
+        std::mt19937 rng;
         std::uniform_int_distribution<int> U_disc{0, L-1};
         std::uniform_real_distribution<double> U{0, 1};
 
     public:
-        Simulation(Ising<L> system) : syst(system) { }
+        Simulation(Ising<L> system, unsigned int seed) : syst(system), rng{seed} { }
 
         void metropolisSweep() {
             /* Function to implement a Metropolis algorithm sweep, i.e. (strictly speaking)
@@ -239,19 +268,36 @@ class Simulation {
             }
         } 
 
-        void simulation(int n) {
+        void simulation(int n, int saveRate = 0) {
             /* Function to run a MC simulation of n sweeps. */
-            for (int i = 0; i < n; ++i) {
-                metropolisSweep(); // only save every 100th value to reduce correlation & memory usage 
-                if (i % 100 == 0) { // this should also implement a equilibrium assertion
-                    double NM = syst.getNM();
-                    magnetisation.push_back(NM/N);
-                    std::cout << "At sweep no. " << sweeps << std::endl;
+            if (saveRate > 0) {
+                for (int i = 0; i < n; ++i) {
+                    metropolisSweep(); // only save every 100th value to reduce correlation & memory usage 
+                    if (i % 100 == 0) { // this should also implement a equilibrium assertion
+                        double NM = syst.getNM();
+                        magnetisation.push_back(NM/N);
+                        std::cout << "At sweep no. " << sweeps << std::endl;
+                    }
+                    if (i % saveRate == 0) {
+                        syst.saveLatticeSnapshot("latticeSnaps.bin", true);
+                    }
                 }
+                int flipSuccesses = syst.getFlipSuccess();
+                double successPercentage = static_cast<double>(flipSuccesses)/(n*N);
+                std::cout << "DONE! \nPercentage of spin flips successful: " << successPercentage << std::endl;
+            } else {
+                for (int i = 0; i < n; ++i) {
+                    metropolisSweep(); // only save every 100th value to reduce correlation & memory usage 
+                    if (i % 100 == 0) { // this should also implement a equilibrium assertion
+                        double NM = syst.getNM();
+                        magnetisation.push_back(NM/N);
+                        std::cout << "At sweep no. " << sweeps << std::endl;
+                    }
+                }
+                int flipSuccesses = syst.getFlipSuccess();
+                double successPercentage = static_cast<double>(flipSuccesses)/(n*N);
+                std::cout << "DONE! \nPercentage of spin flips successful: " << successPercentage << std::endl;
             }
-            int flipSuccesses = syst.getFlipSuccess();
-            double successPercentage = static_cast<double>(flipSuccesses)/(n*N);
-            std::cout << "DONE! \nPercentage of spin flips successful: " << successPercentage << std::endl;
         }
          
 };
@@ -266,10 +312,10 @@ class Simulation {
 
 
 int main() {
-
-    Ising<40> testIsing(1, 1, 2.3); 
-    Simulation<40> testSim(testIsing);
-    testSim.simulation(100000);
+    // ISING(J, H, T)
+    Ising<40> testIsing(1, 0, 2.1, 42); 
+    Simulation<40> testSim(testIsing, 42);
+    testSim.simulation(10000, 1);
     testSim.saveMagnetisation("testMagnetisation.csv");
    
     return 0;
