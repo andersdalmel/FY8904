@@ -304,8 +304,31 @@ class Simulation {
 
 
 
+template<std::size_t L> 
+class Ensemble {
+    private:
+        int S;
+        int J;
+        int H;
+        int T;
+        unsigned int seed;
+        int simLength;
+
+    public:
+        Ensemble(int samples, int J, int H, int T, unsigned int seed, int simLength) : S{samples}, J{J}, H{H}, T{T}, 
+                                            seed{seed}, simLength{simLength} { }
+
+        void runSimulations() {
+            for (int s = 0; s < S; ++s) {
+                Ising<L> syst(J, H, T, seed + i);
+                Simulation<L> sim(syst, seed + i);
+                sim.simulation(simLength, 0); // change saverate of snaps manually if snaps are desired
+            }
+        }
 
 
+
+};
 
 
 
