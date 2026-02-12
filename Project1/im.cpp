@@ -15,7 +15,7 @@ perhaps this is simplest by implementing first a class called Spin that we can t
 each site? Or is this computationally inefficient? 
 The only thing that class would contain would be a value +/- 1, so it's probably superfluous.
 Go straight to class Ising.
-
+ 
 Maybe it would be cool to simulate enough samples to approximate M(T)? 
 */
 
