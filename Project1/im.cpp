@@ -15,7 +15,7 @@ perhaps this is simplest by implementing first a class called Spin that we can t
 each site? Or is this computationally inefficient? 
 The only thing that class would contain would be a value +/- 1, so it's probably superfluous.
 Go straight to class Ising.
-
+ 
 Maybe it would be cool to simulate enough samples to approximate M(T)? 
 */
 
@@ -176,6 +176,7 @@ class Ising {
             return flipSuccess;
         }
 
+
                 
         /* ------------------- */
         /* Monte Carlo methods */
@@ -229,11 +230,13 @@ class Simulation {
         size_t N = L*L;
         int sweeps = 0;
         vector<double> magnetisation;
-        vector<double> totalEnergy;
+        
+        double totalEnergy;
+        double finalMagnetisation;
 
         std::mt19937 rng;
         std::uniform_int_distribution<int> U_disc{0, L-1};
-        std::uniform_real_distribution<double> U{0, 1};
+        std::uniform_real_distribution<double> U{0, 1}; 
 
     public:
         Simulation(Ising<L> system, unsigned int seed) : syst(system), rng{seed} { }
@@ -251,6 +254,14 @@ class Simulation {
 
         vector<double> getMagnetisation() {
             return magnetisation;
+        }
+
+        double getTotalEnergy() {
+            return totalEnergy;
+        }
+
+        double getFinalMagnetisation() {
+            return finalMagnetisation;
         }
 
         void printLattice() {
@@ -282,6 +293,7 @@ class Simulation {
                         syst.saveLatticeSnapshot("latticeSnaps.bin", true);
                     }
                 }
+                totalEnergy = syst.calculateTotalEnergy();
                 int flipSuccesses = syst.getFlipSuccess();
                 double successPercentage = static_cast<double>(flipSuccesses)/(n*N);
                 std::cout << "DONE! \nPercentage of spin flips successful: " << successPercentage << std::endl;
@@ -294,12 +306,15 @@ class Simulation {
                         std::cout << "At sweep no. " << sweeps << std::endl;
                     }
                 }
+                totalEnergy = syst.calculateTotalEnergy();
+                finalMagnetisation = syst.getNM() / N;
                 int flipSuccesses = syst.getFlipSuccess();
                 double successPercentage = static_cast<double>(flipSuccesses)/(n*N);
                 std::cout << "DONE! \nPercentage of spin flips successful: " << successPercentage << std::endl;
             }
         }
-         
+        
+
 };
 
 
@@ -308,21 +323,27 @@ template<std::size_t L>
 class Ensemble {
     private:
         int S;
-        int J;
-        int H;
-        int T;
+        double J;
+        double H;
+        vector<double> T;
         unsigned int seed;
         int simLength;
+        double energy;          // running average of system energy at the end of simulations
+        double magnetisation;   // running average of system magnetisation at the end of simulations
 
     public:
-        Ensemble(int samples, int J, int H, int T, unsigned int seed, int simLength) : S{samples}, J{J}, H{H}, T{T}, 
+        Ensemble(int samples, double J, double H, vector<double> T, unsigned int seed, int simLength) : S{samples}, J{J}, H{H}, T{T}, 
                                             seed{seed}, simLength{simLength} { }
 
         void runSimulations() {
-            for (int s = 0; s < S; ++s) {
-                Ising<L> syst(J, H, T, seed + i);
-                Simulation<L> sim(syst, seed + i);
-                sim.simulation(simLength, 0); // change saverate of snaps manually if snaps are desired
+            for (double temp : T) {    
+                for (int s = 0; s < S; ++s) {
+                    Ising<L> syst(J, H, T, seed + i);
+                    Simulation<L> sim(syst, seed + i);
+                    sim.simulation(simLength, 0); // change saverate of snaps manually if snaps are desired
+                    energy = energy*(i - 1)/i + sim.getTotalEnergy() / i; // calc. running avg
+                    magnetisation = magnetisation*(i - 1)/i + sim.getFinalMagnetisation() / i; // calc. running avg
+                }
             }
         }
 
